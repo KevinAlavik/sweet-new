@@ -129,14 +129,14 @@ class Assignment(ASTNode):
         return f"Assignment({self.name}, {self.value})"
     
 class ExternDecl(ASTNode):
-    def __init__(self, name, is_variadic, return_type, parameters=None):
+    def __init__(self, name, is_variadic, return_type, parameters=None, is_var=False):
         self.name = name
         self.is_variadic = is_variadic
         self.return_type = return_type or Type("void")
         self.parameters = parameters if parameters is not None else []
-
+        self.var = is_var
     def __str__(self):
-        return f"ExternDecl({self.name}, variadic={self.is_variadic}, return_type={self.return_type}, parameters={self.parameters})"
+        return f"ExternDecl({self.name}, variadic={self.is_variadic}, return_type={self.return_type}, parameters={self.parameters}, var={self.var})"
 
 # === Parser ===
 class Parser:

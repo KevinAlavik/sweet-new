@@ -60,7 +60,8 @@ class Importer:
                 name=node.name,
                 is_variadic=False,
                 return_type=node.type_,
-                parameters=[]
+                parameters=[],
+                is_var=True
             )
         else:
             return None

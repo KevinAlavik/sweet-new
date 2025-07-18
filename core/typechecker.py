@@ -55,7 +55,7 @@ class Type:
 
 class TypeChecker:
     def __init__(self):
-        self.symbols = {}   # global + current scope variables
+        self.symbols = {}
         self.functions = {}
         self.ptr_bits = struct.calcsize("P") * 8
 
@@ -161,11 +161,16 @@ class TypeChecker:
         return node.type_
 
     def check_ExternDecl(self, node):
-        if node.name in self.functions:
-            self.error(f"Function '{node.name}' already defined or declared")
-        self.functions[node.name] = node
+        if node.var:
+            if node.name in self.symbols:
+                self.error(f"Extern variable '{node.name}' already defined")
+            self.symbols[node.name] = node.return_type
+        else:
+            if node.name in self.functions:
+                self.error(f"Function '{node.name}' already defined or declared")
+            self.functions[node.name] = node
         return node.return_type
-    
+        
     def check_FunctionDef(self, node):
         if node.name in self.functions:
             self.error(f"Function '{node.name}' already defined")
