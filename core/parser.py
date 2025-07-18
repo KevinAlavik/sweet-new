@@ -138,6 +138,13 @@ class ExternDecl(ASTNode):
     def __str__(self):
         return f"ExternDecl({self.name}, variadic={self.is_variadic}, return_type={self.return_type}, parameters={self.parameters}, var={self.var})"
 
+class AsmBlock(ASTNode):
+    def __init__(self, instructions: list[str]):
+        self.instructions = instructions
+
+    def __str__(self):
+        return f"AsmBlock({self.instructions})"
+
 # === Parser ===
 class Parser:
     def __init__(self, src):
@@ -392,6 +399,8 @@ class Parser:
                 return self.parse_variable(is_public=False)
             elif kw == "extern":
                 return self.parse_extern()
+            elif kw == "asm":
+                return self.parse_asm_block()
             else:
                 expr = self.parse_expression()
                 self.expect(TokenType.SEMICOLON)
@@ -457,6 +466,34 @@ class Parser:
         self.expect(TokenType.SEMICOLON)
 
         return ExternDecl(name, is_variadic, return_type, parameters)
+    
+    def parse_asm_block(self):
+        self.expect(TokenType.KEYWORD)
+        self.expect(TokenType.LBRACE)
+
+        instructions = []
+        current_line_tokens = []
+
+        while self.current_token.type != TokenType.RBRACE:
+            if self.current_token.type == TokenType.EOF:
+                raise Exception("Unexpected EOF in asm block")
+
+            tok = self.eat()
+            if tok.value == ';':
+                line = ' '.join(str(tok) for tok in current_line_tokens).strip()
+                if line:
+                    instructions.append(line)
+                current_line_tokens = []
+            else:
+                current_line_tokens.append(tok.value)
+
+        if current_line_tokens:
+            line = ' '.join(str(tok) for tok in current_line_tokens).strip()
+            if line:
+                instructions.append(line)
+
+        self.expect(TokenType.RBRACE)
+        return AsmBlock(instructions)
 
     def parse(self):
         statements = []

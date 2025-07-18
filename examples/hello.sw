@@ -1,7 +1,6 @@
-import std.io : println;
-import core.math;
+import std.io : write;
 
 fn main() -> int {
-    println("Hello, World");
+    write(1, "Hello, World!\n", 15);
     return 0;
 }

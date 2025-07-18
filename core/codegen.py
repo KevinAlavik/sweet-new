@@ -18,6 +18,7 @@ class CodeGen:
         self.global_vars = []
         self.externs = []
         self.global_symbols = []
+        self.local_vars_data = []
 
     def unique_label(self, base="L"):
         self.label_count += 1
@@ -31,6 +32,9 @@ class CodeGen:
         return self.string_literals[s]
 
     def emit(self, instruction, indent=4):
+        instruction = instruction.replace(" ,", ",").replace(", ", ", ")
+        import re
+        instruction = re.sub(r"\[\s*(.*?)\s*\]", r"[\1]", instruction)
         self.output.append(f"{' ' * indent}{instruction}")
 
     def emit_section(self, section_name):
@@ -69,25 +73,32 @@ class CodeGen:
         for ext in self.externs:
             self.emit(f"extern {ext}")
 
-        if self.global_vars:
+        if self.global_vars or self.local_vars_data:
             self.emit_section("data")
             for gvar in self.global_vars:
                 if gvar.value is None:
-                    continue
-                label = gvar.name
-                if isinstance(gvar.value, NumberLiteral):
-                    self.emit(f"{label}: dq {gvar.value.value}")
+                    self.emit(f"{gvar.name}: dq 0")
+                elif isinstance(gvar.value, NumberLiteral):
+                    self.emit(f"{gvar.name}: dq {gvar.value.value}")
                 elif isinstance(gvar.value, StringLiteral):
                     str_label = self.get_string_label(gvar.value.value)
-                    self.emit(f"{label}: dq {str_label}")
+                    self.emit(f"{gvar.name}: dq {str_label}")
                 else:
-                    self.emit(f"{label}: dq 0")
+                    self.emit(f"{gvar.name}: dq 0")
 
-            uninit_globals = [g for g in self.global_vars if g.value is None]
-            if uninit_globals:
-                self.emit_section("bss")
-                for gvar in uninit_globals:
-                    self.emit(f"{gvar.name}: resq 1")
+            for lvar in self.local_vars_data:
+                if lvar.value is None:
+                    self.emit(f"{lvar.name}: dq 0")
+                elif isinstance(lvar.value, NumberLiteral):
+                    self.emit(f"{lvar.name}: dq {lvar.value.value}")
+                elif isinstance(lvar.value, StringLiteral):
+                    str_label = self.get_string_label(lvar.value.value)
+                    self.emit(f"{lvar.name}: dq {str_label}")
+                else:
+                    self.emit(f"{lvar.name}: dq 0")
+
+        self.emit_section("bss")
+        # No uninitialized globals here; they are all defined in data as 0 if none.
 
         self.emit_section("text")
         for node in ast_nodes:
@@ -123,6 +134,7 @@ class CodeGen:
             StringLiteral: lambda n: self._codegen_expression(n, 'rax'),
             BooleanLiteral: lambda n: self._codegen_expression(n, 'rax'),
             VariableAccess: lambda n: self._codegen_expression(n, 'rax'),
+            AsmBlock: self._codegen_asm_block,
         }
         handler = handlers.get(type(node))
         if handler:
@@ -137,6 +149,7 @@ class CodeGen:
         self.current_function = node
         self.var_offsets = {}
         self.stack_size = 0
+        self.local_vars_data = []
 
         self.emit_label(node.name)
 
@@ -147,6 +160,7 @@ class CodeGen:
                     raise CodegenException("Arrays are not supported")
                 offset += 8
                 self.var_offsets[var.name] = -offset
+                self.local_vars_data.append(var)
         self.stack_size = offset
 
         self.prologue()
@@ -180,6 +194,7 @@ class CodeGen:
         self.current_function = None
         self.var_offsets = {}
         self.stack_size = 0
+        self.local_vars_data = []
 
     def _codegen_variable_def(self, node):
         if self.current_function:
@@ -188,7 +203,7 @@ class CodeGen:
             if node.value is not None:
                 self._codegen_expression(node.value, 'rax')
                 offset = self.var_offsets[node.name]
-                self.emit(f"mov [rbp{offset}], rax")
+                self.emit(f"mov [rbp{offset:+}], rax")
 
     def _codegen_return(self, node):
         if node.expression:
@@ -202,7 +217,7 @@ class CodeGen:
             raise CodegenException("Array indexing is not supported")
         self._codegen_expression(node.value, 'rax')
         offset = self.var_offsets[node.name]
-        self.emit(f"mov [rbp{offset}], rax")
+        self.emit(f"mov [rbp{offset:+}], rax")
 
     def _codegen_function_call(self, node):
         arg_regs = ['rdi', 'rsi', 'rdx', 'rcx', 'r8', 'r9']
@@ -231,6 +246,9 @@ class CodeGen:
         if adjustment:
             self.emit(f"add rsp, {adjustment}")
 
+    def _codegen_asm_block(self, node):
+        for instr in node.instructions:
+            self.emit(instr)
 
     def _codegen_expression(self, node, target_reg='rax'):
         if isinstance(node, NumberLiteral):
@@ -239,8 +257,7 @@ class CodeGen:
             label = self.get_string_label(node.value)
             self.emit(f"lea {target_reg}, [rel {label}]")
         elif isinstance(node, BooleanLiteral):
-            self.emit(f"mov {target_reg}, {1 if node.value == "true" else 0}")
-
+            self.emit(f"mov {target_reg}, {1 if node.value == 'true' else 0}")
         elif isinstance(node, VariableAccess):
             if hasattr(node, 'index') and node.index is not None:
                 raise CodegenException("Array indexing is not supported")
@@ -248,7 +265,7 @@ class CodeGen:
                 var_name = node.parts[0]
                 if self.current_function and var_name in self.var_offsets:
                     offset = self.var_offsets[var_name]
-                    self.emit(f"mov {target_reg}, [rbp{offset}]")
+                    self.emit(f"mov {target_reg}, [rbp{offset:+}]")
                 else:
                     self.emit(f"mov {target_reg}, [{var_name}]")
             elif len(node.parts) == 2:
@@ -279,45 +296,14 @@ class CodeGen:
             TokenType.PLUS: ("add rax, rbx",),
             TokenType.MINUS: ("sub rax, rbx",),
             TokenType.STAR: ("imul rax, rbx",),
-            TokenType.SLASH: (
-                "cqo",
-                "idiv rbx",
-            ),
-            TokenType.EQ: (
-                "cmp rax, rbx",
-                "sete al",
-                "movzx rax, al",
-            ),
-            TokenType.NOT_EQ: (
-                "cmp rax, rbx",
-                "setne al",
-                "movzx rax, al",
-            ),
-            TokenType.LT: (
-                "cmp rax, rbx",
-                "setl al",
-                "movzx rax, al",
-            ),
-            TokenType.LE: (
-                "cmp rax, rbx",
-                "setle al",
-                "movzx rax, al",
-            ),
-            TokenType.GT: (
-                "cmp rax, rbx",
-                "setg al",
-                "movzx rax, al",
-            ),
-            TokenType.GE: (
-                "cmp rax, rbx",
-                "setge al",
-                "movzx rax, al",
-            ),
-            TokenType.PERCENT: (
-                "cqo",
-                "idiv rbx",
-                "mov rax, rdx",
-            ),
+            TokenType.SLASH: ("cqo", "idiv rbx"),
+            TokenType.EQ: ("cmp rax, rbx", "sete al", "movzx rax, al"),
+            TokenType.NOT_EQ: ("cmp rax, rbx", "setne al", "movzx rax, al"),
+            TokenType.LT: ("cmp rax, rbx", "setl al", "movzx rax, al"),
+            TokenType.LE: ("cmp rax, rbx", "setle al", "movzx rax, al"),
+            TokenType.GT: ("cmp rax, rbx", "setg al", "movzx rax, al"),
+            TokenType.GE: ("cmp rax, rbx", "setge al", "movzx rax, al"),
+            TokenType.PERCENT: ("cqo", "idiv rbx", "mov rax, rdx"),
         }
 
         asm_instrs = op_map.get(node.op)

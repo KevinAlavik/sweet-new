@@ -206,6 +206,8 @@ class TypeChecker:
     def check_ImportNode(self, node):
         pass
 
+    def check_AsmBlock(self, node):
+        pass
 
     def check_integer_range(self, type_, value_node):
         if type_.is_float():
