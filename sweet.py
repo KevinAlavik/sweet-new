@@ -42,6 +42,8 @@ class Compiler:
         try:
             ast = parser.parse()
             tokens = parser.tokens
+            importer = Importer("lib/")
+            ast, _ = importer.resolve_imports(ast)
         except Parser.ParserError as e:
             print(f"[!] Parser error in {self.args.source}:")
             e.display()
@@ -64,12 +66,12 @@ class Compiler:
             print(codegen.generate(ast))
             sys.exit(0)
 
-    def compile_to_object(self, source: str, obj_path: str) -> None:
+    def compile_to_object(self, source: str, obj_path: str) -> List[str]:
         parser = Parser(source)
         importer = Importer("lib/")
         try:
             ast = parser.parse()
-            ast = importer.resolve_imports(ast)
+            ast, imported_modules = importer.resolve_imports(ast)
             if self.args.verbose:
                 print(f"[*] Parsed {self.args.source} successfully")
                 print(ast)
@@ -89,7 +91,7 @@ class Compiler:
 
         codegen = CodeGen()
         asm_output = codegen.generate(ast)
-        
+
         asm_path = obj_path[:-2] + ".asm"
         with open(asm_path, "w", encoding="utf-8") as f:
             f.write(asm_output)
@@ -103,6 +105,20 @@ class Compiler:
             print(f"[!] Assembly failed for {self.args.source}: {e}")
             sys.exit(1)
 
+        return imported_modules
+
+    def compile_imported_modules(self, imported_modules: List[str]) -> List[str]:
+        obj_paths = []
+        for mod_path in imported_modules:
+            mod_name = os.path.splitext(os.path.basename(mod_path))[0]
+            mod_obj_path = os.path.join(self.build_dir, f"{mod_name}.o")
+            if self.args.verbose:
+                print(f"[*] Compiling imported module: {mod_path}")
+            source = self.read_source(mod_path)
+            self.compile_to_object(source, mod_obj_path)
+            obj_paths.append(mod_obj_path)
+        return obj_paths
+
     def assemble_runtime(self) -> str:
         runtime_obj_path = os.path.join(self.build_dir, "runtime.o")
         nasm_cmd = ["nasm", "-felf64", self.args.runtime, "-o", runtime_obj_path]
@@ -115,9 +131,8 @@ class Compiler:
             sys.exit(1)
         return runtime_obj_path
 
-    def link_objects(self, runtime_obj: str, main_obj: str) -> None:
-        ld_cmd = ["gcc", "-nostartfiles", "-no-pie", 
-                 runtime_obj, main_obj, "-o", self.args.output]
+    def link_objects(self, object_files: List[str]) -> None:
+        ld_cmd = ["gcc", "-nostartfiles", "-no-pie"] + object_files + ["-o", self.args.output]
         if self.args.verbose:
             print(f"[*] Running: {' '.join(ld_cmd)}")
         try:
@@ -140,18 +155,17 @@ class Compiler:
 
     def compile(self) -> None:
         self.validate_input_files()
-        
         source = self.read_source(self.args.source)
-        
         if self.args.output_format != "bin":
             self.process_non_binary_output(source)
             return
-
         self.setup_build_directory()
         runtime_obj = self.assemble_runtime()
         main_obj = os.path.join(self.build_dir, "prog.o")
-        self.compile_to_object(source, main_obj)
-        self.link_objects(runtime_obj, main_obj)
+        imported_modules = self.compile_to_object(source, main_obj)
+        imported_objs = self.compile_imported_modules(imported_modules)
+        all_objs = [runtime_obj, main_obj] + imported_objs
+        self.link_objects(all_objs)
         self.run_executable()
 
 def parse_arguments() -> argparse.Namespace:

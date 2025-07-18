@@ -89,16 +89,6 @@ class CodeGen:
                 for gvar in uninit_globals:
                     self.emit(f"{gvar.name}: resq 1")
 
-        if self.string_literals:
-            self.emit_section("rodata")
-            for s, label in self.string_literals.items():
-                try:
-                    interpreted = s.encode('utf-8').decode('unicode_escape').encode('latin1')
-                except UnicodeEncodeError:
-                    raise CodegenException(f"Invalid character in string literal: {repr(s)}")
-                ascii_bytes = ', '.join(str(b) for b in interpreted)
-                self.emit(f"{label}: db {ascii_bytes}, 0")
-
         self.emit_section("text")
         for node in ast_nodes:
             if isinstance(node, FunctionDef):

@@ -55,7 +55,7 @@ class Type:
 
 class TypeChecker:
     def __init__(self):
-        self.symbols = {}
+        self.symbols = {}   # global + current scope variables
         self.functions = {}
         self.ptr_bits = struct.calcsize("P") * 8
 
@@ -170,13 +170,18 @@ class TypeChecker:
         if node.name in self.functions:
             self.error(f"Function '{node.name}' already defined")
         self.functions[node.name] = node
-        old_symbols = self.symbols
-        self.symbols = {param.name: param.type_ for param in node.parameters}
+        old_symbols = self.symbols.copy()
+        # Add parameters to the current scope for the function body
+        for param in node.parameters:
+            if param.name in self.symbols:
+                self.error(f"Parameter '{param.name}' already defined in scope")
+            self.symbols[param.name] = param.type_
         for stmt in node.body:
             stmt_type = self.check(stmt)
             if stmt.__class__.__name__ == "ReturnNode":
                 if not node.return_type.is_compatible_with(stmt_type):
                     self.error(f"Function '{node.name}' returns {stmt_type}, but declared {node.return_type}")
+        # Restore symbols (globals + prior)
         self.symbols = old_symbols
         return node.return_type
     

@@ -1,6 +1,7 @@
-import std.io;
+import std.io : println;
+var greeting: string = "Hello, World!";
 
 fn main() -> int {
-    println("Hello, World!");
+    println(greeting);
     return 0;
 }

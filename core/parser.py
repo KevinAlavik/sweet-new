@@ -4,10 +4,6 @@ from core.typechecker import Type
 
 # === AST Nodes ===
 class ASTNode(ABC):
-    def compile(self):
-        print(f"compile() is not implemented for node: {str(self)}")
-        pass
-
     def __repr__(self):
         return str(self)
 
@@ -50,11 +46,16 @@ class BinaryOp(ASTNode):
         return f"BinaryOp({self.left}, {self.op.name}, {self.right})"
 
 class ImportNode(ASTNode):
-    def __init__(self, parts):
+    def __init__(self, parts, imported_symbols=None):
         self.parts = parts
+        self.imported_symbols = imported_symbols
 
     def __str__(self):
-        return f"Import({'.'.join(self.parts)})"
+        if self.imported_symbols:
+            return f"Import({'.'.join(self.parts)}: {', '.join(self.imported_symbols)})"
+        else:
+            return f"Import({'.'.join(self.parts)})"
+
 
 class FunctionCall(ASTNode):
     def __init__(self, name, arguments):
@@ -209,8 +210,20 @@ class Parser:
     def parse_import(self):
         self.expect(TokenType.KEYWORD)
         parts = self.parse_dotted_identifier()
+
+        imported_symbols = None
+        if self.current_token.type == TokenType.COLON:
+            self.eat()
+            imported_symbols = []
+            while True:
+                imported_symbols.append(self.expect(TokenType.IDENT).value)
+                if self.current_token.type != TokenType.COMMA:
+                    break
+                self.eat()
         self.expect(TokenType.SEMICOLON)
-        return ImportNode(parts)
+
+        return ImportNode(parts, imported_symbols)
+
 
     def parse_arguments(self):
         arguments = []
