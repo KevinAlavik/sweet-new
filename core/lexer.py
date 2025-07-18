@@ -90,7 +90,7 @@ class Lexer:
         self.tokens = []
 
         self.keywords = {
-            "let", "if", "else", "while", "return", "pub", "fn", "const", "var", "import", "extern"
+            "let", "if", "else", "while", "return", "fn", "const", "var", "import", "extern"
         }
 
         self.symbols = {

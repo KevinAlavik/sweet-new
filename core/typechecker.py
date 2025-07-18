@@ -143,8 +143,8 @@ class TypeChecker:
                 self.error(f"Function '{node.name}' expects {len(func_def.parameters)} arguments, got {len(node.arguments)}")
             for param, arg in zip(func_def.parameters, node.arguments):
                 arg_type = self.check(arg)
-                if not param.is_compatible_with(arg_type):
-                    self.error(f"Function '{node.name}' argument '{param.name}' expects {param.type}, got {arg_type}")
+                if not param.type_.is_compatible_with(arg_type):
+                    self.error(f"Function '{node.name}' argument '{param.name}' expects {param.type_}, got {arg_type}")
         return func_def.return_type
 
     def check_ReturnNode(self, node):
@@ -187,6 +187,9 @@ class TypeChecker:
                 self.error(f"Array literal element type mismatch: {first_type} vs {et}")
 
         return Type(name=first_type.name, is_array=True, size=len(node.elements))
+    
+    def check_ImportNode(self, node):
+        pass
 
 
     def check_integer_range(self, type_, value_node):

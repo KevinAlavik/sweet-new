@@ -1,5 +1,5 @@
-extern add(int, int) -> int;
+import core.math;
 
-pub fn main() -> int {
+fn main() -> int {
     return add(1, 1);
 }

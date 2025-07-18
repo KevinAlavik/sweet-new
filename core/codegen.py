@@ -57,11 +57,10 @@ class CodeGen:
         for node in ast_nodes:
             if isinstance(node, VariableDef) and self.current_function is None:
                 self.global_vars.append(node)
-                if hasattr(node, 'pub') and node.pub:
-                    self.global_symbols.append(node.name)
+                self.global_symbols.append(node.name)
             elif isinstance(node, ExternDecl):
                 self.externs.append(node.name)
-            elif isinstance(node, FunctionDef) and hasattr(node, 'is_public') and node.is_public:
+            elif isinstance(node, FunctionDef):
                 self.global_symbols.append(node.name)
 
         self.emit("default rel")

@@ -6,6 +6,7 @@ import argparse
 from core.parser import Parser
 from core.typechecker import TypeChecker, TypeError
 from core.codegen import CodeGen
+from core.importer import Importer
 
 def compile_source_to_obj(source_path, obj_path, asflags, verbose):
     try:
@@ -16,8 +17,11 @@ def compile_source_to_obj(source_path, obj_path, asflags, verbose):
         sys.exit(1)
 
     parser = Parser(source)
+    importer = Importer("lib/")
     try:
         ast = parser.parse()
+        ast = importer.resolve_imports(ast)
+        print(ast)
     except Parser.ParserError as e:
         print(f"[!] Parser error in {source_path}:")
         e.display()
@@ -84,14 +88,10 @@ def main():
     args = parser.parse_args()
 
     main_source = args.source
-    lib_source = "lib.sw"
     runtime_asm_path = args.runtime_asm
 
     if not os.path.exists(main_source):
         print(f"[!] Error: {main_source} not found.")
-        sys.exit(1)
-    if not os.path.exists(lib_source):
-        print(f"[!] Error: {lib_source} not found.")
         sys.exit(1)
     if not os.path.exists(runtime_asm_path):
         print(f"[!] Error: {runtime_asm_path} not found.")
@@ -100,7 +100,13 @@ def main():
     if args.output_format != "bin":
         with open(main_source, 'r', encoding='utf-8') as f:
             source = f.read()
-        parser = Parser(source)
+        try:
+            full_source = importer.resolve_imports(source, os.path.dirname(main_source))
+        except Exception as e:
+            print(f"[!] Import resolution error in {main_source}: {e}")
+            sys.exit(1)
+
+        parser = Parser(full_source)
         try:
             ast = parser.parse()
             tokens = parser.tokens
@@ -138,13 +144,11 @@ def main():
     runtime_obj = assemble_runtime(runtime_asm_path, build_dir, args.verbose)
 
     main_obj = os.path.join(build_dir, "prog.o")
-    lib_obj = os.path.join(build_dir, "lib.sw.o")
 
-    compile_source_to_obj(lib_source, lib_obj, args.asflags, args.verbose)
     compile_source_to_obj(main_source, main_obj, args.asflags, args.verbose)
 
     out_path = args.output
-    ld_cmd = ["ld", runtime_obj, main_obj, lib_obj, "-o", out_path]
+    ld_cmd = ["ld", runtime_obj, main_obj, "-o", out_path]
     if args.verbose:
         print(f"[*] Running: {' '.join(ld_cmd)}")
     try:
