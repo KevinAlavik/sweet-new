@@ -1,9 +1,9 @@
 extern printf(...) -> int;
 
 fn main() -> int {
-    var a: u16 = 69;
-    var ptr: u16* = &a;
-    var pptr: u16** = &ptr;
+    var a: usize = 69;
+    var ptr: usize* = &a;
+    var pptr: usize** = &ptr;
 
     printf("Initial:\n");
     printf("a = %d, ptr = %p, *ptr = %d\n", a, ptr, *ptr);
