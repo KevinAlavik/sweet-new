@@ -6,7 +6,6 @@ class TypeError(Exception):
         print("Typechecker Error: " + msg)
         exit(1)
 
-
 class Type:
     def __init__(self, name, is_array=False, size=None):
         self.name = name
@@ -34,6 +33,9 @@ class Type:
 
     def is_string(self):
         return self.name == "string"
+    
+    def is_bool(self):
+        return self.name == "bool"
 
     def can_have_len_property(self):
         return self.is_array
@@ -79,6 +81,9 @@ class TypeChecker:
 
     def check_StringLiteral(self, node):
         return Type("string")
+
+    def check_BooleanLiteral(self, node):
+        return Type("bool")
 
     def check_VariableAccess(self, node):
         name = node.parts[0]

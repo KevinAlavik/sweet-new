@@ -17,6 +17,13 @@ class NumberLiteral(ASTNode):
 
     def __str__(self):
         return f"Number({self.value})"
+    
+class BooleanLiteral(ASTNode):
+    def __init__(self, value):
+        self.value = value
+
+    def __str__(self):
+        return f"BooleanLiteral({self.value})"
 
 class StringLiteral(ASTNode):
     def __init__(self, value):
@@ -254,6 +261,9 @@ class Parser:
         elif tok.type == TokenType.SLIT:
             self.eat()
             return StringLiteral(tok.value)
+        elif tok.type == TokenType.BLIT:
+            self.eat()
+            return BooleanLiteral(tok.value)
         elif tok.type == TokenType.LBRACKET:
             self.eat()
             elements = []

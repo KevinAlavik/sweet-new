@@ -26,7 +26,7 @@ class CodeGen:
     def get_string_label(self, s):
         if s not in self.string_literals:
             self.string_label_count += 1
-            label = f".LC{self.string_label_count}"
+            label = f"LC{self.string_label_count}"
             self.string_literals[s] = label
         return self.string_literals[s]
 
@@ -89,6 +89,16 @@ class CodeGen:
                 for gvar in uninit_globals:
                     self.emit(f"{gvar.name}: resq 1")
 
+        if self.string_literals:
+            self.emit_section("rodata")
+            for s, label in self.string_literals.items():
+                try:
+                    interpreted = s.encode('utf-8').decode('unicode_escape').encode('latin1')
+                except UnicodeEncodeError:
+                    raise CodegenException(f"Invalid character in string literal: {repr(s)}")
+                ascii_bytes = ', '.join(str(b) for b in interpreted)
+                self.emit(f"{label}: db {ascii_bytes}, 0")
+
         self.emit_section("text")
         for node in ast_nodes:
             if isinstance(node, FunctionDef):
@@ -121,6 +131,7 @@ class CodeGen:
             BinaryOp: self._codegen_binary_op,
             NumberLiteral: lambda n: self._codegen_expression(n, 'rax'),
             StringLiteral: lambda n: self._codegen_expression(n, 'rax'),
+            BooleanLiteral: lambda n: self._codegen_expression(n, 'rax'),
             VariableAccess: lambda n: self._codegen_expression(n, 'rax'),
         }
         handler = handlers.get(type(node))
@@ -193,7 +204,7 @@ class CodeGen:
         if node.expression:
             self._codegen_expression(node.expression, 'rax')
         else:
-            self.emit("mov rax, 0")  # Ensure rax = 0 if no expression
+            self.emit("mov rax, 0")
         self.epilogue()
 
     def _codegen_assignment(self, node):
@@ -207,31 +218,39 @@ class CodeGen:
         arg_regs = ['rdi', 'rsi', 'rdx', 'rcx', 'r8', 'r9']
         argc = len(node.arguments)
 
-        for i, arg in enumerate(node.arguments):
-            self._codegen_expression(arg, 'rax')
-            if i < 6:
-                self.emit(f"mov {arg_regs[i]}, rax")
-            else:
-                self.emit(f"push rax")
-
         stack_args = max(0, argc - 6)
+        adjustment = 0
         if (stack_args % 2) != 0:
-            self.emit("sub rsp, 8")
+            adjustment = 8
+            self.emit(f"sub rsp, {adjustment}")
 
+        for i in reversed(range(6, argc)):
+            self._codegen_expression(node.arguments[i], 'rax')
+            self.emit("push rax")
+
+        for i in range(min(6, argc)):
+            self._codegen_expression(node.arguments[i], 'rax')
+            self.emit(f"mov {arg_regs[i]}, rax")
+
+        self.emit("xor rax, rax")
         self.emit(f"call {node.name}")
 
         if stack_args > 0:
             self.emit(f"add rsp, {stack_args * 8}")
 
-        if (stack_args % 2) != 0:
-            self.emit("add rsp, 8")
+        if adjustment:
+            self.emit(f"add rsp, {adjustment}")
+
 
     def _codegen_expression(self, node, target_reg='rax'):
         if isinstance(node, NumberLiteral):
             self.emit(f"mov {target_reg}, {node.value}")
         elif isinstance(node, StringLiteral):
             label = self.get_string_label(node.value)
-            self.emit(f"lea {target_reg}, [{label}]")
+            self.emit(f"lea {target_reg}, [rel {label}]")
+        elif isinstance(node, BooleanLiteral):
+            self.emit(f"mov {target_reg}, {1 if node.value == "true" else 0}")
+
         elif isinstance(node, VariableAccess):
             if hasattr(node, 'index') and node.index is not None:
                 raise CodegenException("Array indexing is not supported")
