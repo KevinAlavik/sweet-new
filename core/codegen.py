@@ -313,6 +313,11 @@ class CodeGen:
                 "setge al",
                 "movzx rax, al",
             ),
+            TokenType.PERCENT: (
+                "cqo",
+                "idiv rbx",
+                "mov rax, rdx",
+            ),
         }
 
         asm_instrs = op_map.get(node.op)

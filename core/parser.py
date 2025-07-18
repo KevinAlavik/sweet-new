@@ -348,6 +348,7 @@ class Parser:
             TokenType.MINUS: 8,
             TokenType.STAR: 9,
             TokenType.SLASH: 9,
+            TokenType.PERCENT: 9,
         }
 
         left = self.parse_unary()
