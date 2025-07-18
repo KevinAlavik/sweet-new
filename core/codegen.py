@@ -97,9 +97,6 @@ class CodeGen:
                 else:
                     self.emit(f"{lvar.name}: dq 0")
 
-        self.emit_section("bss")
-        # No uninitialized globals here; they are all defined in data as 0 if none.
-
         self.emit_section("text")
         for node in ast_nodes:
             if isinstance(node, FunctionDef):
@@ -135,6 +132,8 @@ class CodeGen:
             BooleanLiteral: lambda n: self._codegen_expression(n, 'rax'),
             VariableAccess: lambda n: self._codegen_expression(n, 'rax'),
             AsmBlock: self._codegen_asm_block,
+            Dereference: self._codegen_dereference,
+            Cast: None
         }
         handler = handlers.get(type(node))
         if handler:
@@ -213,6 +212,12 @@ class CodeGen:
         self.epilogue()
 
     def _codegen_assignment(self, node):
+        if isinstance(node.name, Dereference):
+            self._codegen_expression(node.name.expr, 'rbx')
+            self._codegen_expression(node.value, 'rax')
+            self.emit("mov [rbx], rax")
+            return
+
         if hasattr(node.name, "index") and node.name.index is not None:
             raise CodegenException("Array indexing is not supported")
         self._codegen_expression(node.value, 'rax')
@@ -250,6 +255,10 @@ class CodeGen:
         for instr in node.instructions:
             self.emit(instr)
 
+    def _codegen_dereference(self, node, target_reg='rax'):
+        self._codegen_expression(node.expr, target_reg)
+        self.emit(f"mov {target_reg}, [{target_reg}]")
+
     def _codegen_expression(self, node, target_reg='rax'):
         if isinstance(node, NumberLiteral):
             self.emit(f"mov {target_reg}, {node.value}")
@@ -282,6 +291,28 @@ class CodeGen:
             self._codegen_function_call(node)
             if target_reg != 'rax':
                 self.emit(f"mov {target_reg}, rax")
+        elif isinstance(node, PointerLiteral):
+            addr = node.address
+            if isinstance(addr, int):
+                self.emit(f"mov {target_reg}, {addr}")
+            elif isinstance(addr, str):
+                self.emit(f"lea {target_reg}, [rel {addr}]")
+            elif isinstance(addr, VariableAccess):
+                if len(addr.parts) == 1:
+                    var_name = addr.parts[0]
+                    if self.current_function and var_name in self.var_offsets:
+                        offset = self.var_offsets[var_name]
+                        self.emit(f"lea {target_reg}, [rbp{offset:+}]")
+                    else:
+                        self.emit(f"lea {target_reg}, [rel {var_name}]")
+                else:
+                    raise CodegenException("PointerLiteral with complex VariableAccess not supported")
+            else:
+                raise CodegenException(f"Unsupported PointerLiteral value type: {type(addr).__name__}")
+        elif isinstance(node, Dereference):
+            self._codegen_dereference(node)
+        elif isinstance(node, Cast):
+            self._codegen_expression(node.expr)
         else:
             raise CodegenException(f"Unsupported expression node type: {type(node).__name__}")
 

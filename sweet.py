@@ -132,7 +132,7 @@ class Compiler:
         return runtime_obj_path
 
     def link_objects(self, object_files: List[str]) -> None:
-        ld_cmd = ["gcc", "-nostartfiles", "-no-pie"] + object_files + ["-o", self.args.output]
+        ld_cmd = ["gcc", "-no-pie"] + object_files + ["-o", self.args.output]
         if self.args.verbose:
             print(f"[*] Running: {' '.join(ld_cmd)}")
         try:

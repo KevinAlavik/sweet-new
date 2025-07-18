@@ -7,51 +7,74 @@ class TypeError(Exception):
         exit(1)
 
 class Type:
-    def __init__(self, name, is_array=False, size=None):
+    def __init__(self, name, pointer_level=0, is_array=False, size=None):
         self.name = name
         self.is_array = is_array
         self.size = size
+        self.plevel = pointer_level
 
     def __repr__(self):
-        return f"Type(name={self.name!r}, is_array={self.is_array}, size={self.size})"
+        ptr_str = "*" * self.plevel
+        arr_str = f"[{self.size}]" if self.is_array else ""
+        return f"{self.name}{ptr_str}{arr_str}"
 
     def __eq__(self, other):
         if not isinstance(other, Type):
             return False
         return (self.name == other.name and
                 self.is_array == other.is_array and
-                self.size == other.size)
+                self.size == other.size and
+                self.plevel == other.plevel)
 
     def is_integer(self):
-        return self.name in {"u8","u16","u32","u64","i8","i16","i32","i64","usize","isize","int","uint"}
+        return self.plevel == 0 and self.name in {
+            "u8","u16","u32","u64","i8","i16","i32","i64","usize","isize","int","uint"
+        }
 
     def is_signed(self):
-        return self.name in {"i8","i16","i32","i64","isize","int"}
+        return self.plevel == 0 and self.name in {
+            "i8","i16","i32","i64","isize","int"
+        }
 
     def is_unsigned(self):
-        return self.name in {"u8","u16","u32","u64","usize","uint"}
+        return self.plevel == 0 and self.name in {
+            "u8","u16","u32","u64","usize","uint"
+        }
 
     def is_string(self):
-        return self.name == "string"
+        return self.plevel == 0 and self.name == "string"
     
     def is_bool(self):
-        return self.name == "bool"
+        return self.plevel == 0 and self.name == "bool"
 
     def can_have_len_property(self):
         return self.is_array
 
     def is_float(self):
-        return self.name in {"f32", "f64"}
+        return self.plevel == 0 and self.name in {"f32", "f64"}
 
     def is_compatible_with(self, other):
         if self == other:
             return True
-        if self.is_unsigned() and other.name == "int":
-            return True
-        if self.is_signed() and other.name == "uint":
-            return True
-        return False
 
+        if (self.name == "string" and other.name == "u8" and other.plevel == 1) or \
+        (other.name == "string" and self.name == "u8" and self.plevel == 1):
+            return True
+
+        if self.plevel == 0 and other.plevel == 0:
+            if self.is_unsigned() and other.name == "int":
+                return True
+            if self.is_signed() and other.name == "uint":
+                return True
+
+        if self.plevel > 0 or other.plevel > 0:
+            if self.plevel == other.plevel:
+                if self.name == other.name:
+                    return True
+                if self.name == "void" or other.name == "void":
+                    return True
+
+        return False
 
 class TypeChecker:
     def __init__(self):
@@ -103,12 +126,17 @@ class TypeChecker:
         self.error(f"Unknown member '{member_name}' on type '{base_type}'")
 
     def check_Assignment(self, node):
-        if node.name not in self.symbols:
-            self.error(f"Variable '{node.name}' not defined")
-        var_type = self.symbols[node.name]
+        if isinstance(node.name, str):
+            if node.name not in self.symbols:
+                self.error(f"Variable '{node.name}' not defined")
+            var_type = self.symbols[node.name]
+        else:
+            var_type = self.check(node.name)
+        
         val_type = self.check(node.value)
         if not var_type.is_compatible_with(val_type):
             self.error(f"Type mismatch in assignment to '{node.name}': expected {var_type}, got {val_type}")
+        
         self.check_integer_range(var_type, node.value)
         return var_type
 
@@ -176,7 +204,6 @@ class TypeChecker:
             self.error(f"Function '{node.name}' already defined")
         self.functions[node.name] = node
         old_symbols = self.symbols.copy()
-        # Add parameters to the current scope for the function body
         for param in node.parameters:
             if param.name in self.symbols:
                 self.error(f"Parameter '{param.name}' already defined in scope")
@@ -186,7 +213,6 @@ class TypeChecker:
             if stmt.__class__.__name__ == "ReturnNode":
                 if not node.return_type.is_compatible_with(stmt_type):
                     self.error(f"Function '{node.name}' returns {stmt_type}, but declared {node.return_type}")
-        # Restore symbols (globals + prior)
         self.symbols = old_symbols
         return node.return_type
     
@@ -208,6 +234,36 @@ class TypeChecker:
 
     def check_AsmBlock(self, node):
         pass
+
+    def check_PointerLiteral(self, node):
+        if isinstance(node.address, int):
+            return Type("void", pointer_level=1)
+        
+        addr_type = self.check(node.address)
+        return Type(addr_type.name, pointer_level=addr_type.plevel + 1)
+    
+    def check_Dereference(self, node):
+        if node.expr.__class__.__name__ == "Assignment":
+            if isinstance(node.expr.name, str):
+                if node.expr.name not in self.symbols:
+                    self.error(f"Variable '{node.expr.name}' not defined for dereference")
+                var_type = self.symbols[node.expr.name]
+            else:
+                var_type = self.check(node.expr.name)
+        else:
+            var_type = self.check(node.expr)
+        
+        if var_type.plevel == 0:
+            self.error(f"Cannot dereference non-pointer type {var_type}")
+
+        if var_type.plevel == 1 and var_type.name == "void":
+            self.error("Cannot dereference pointer to void")
+        
+        return Type(name=var_type.name, pointer_level=var_type.plevel - 1)
+    
+    def check_Cast(self, node):
+        self.check(node.expr)
+        return node.target_type
 
     def check_integer_range(self, type_, value_node):
         if type_.is_float():

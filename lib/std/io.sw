@@ -1,4 +1,4 @@
-fn write(fd: int, buf: string, len: int) -> int {
+fn write(fd: int, buf: u8*, len: int) -> int {
     asm {
         mov rax, 1;
         syscall;

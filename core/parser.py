@@ -35,6 +35,16 @@ class ArrayLiteral(ASTNode):
     def __str__(self):
         elements_str = ", ".join(str(elem) for elem in self.elements)
         return f"ArrayLiteral([{elements_str}])"
+    
+class PointerLiteral(ASTNode):
+    def __init__(self, address: int):
+        self.address = address
+
+    def __str__(self):
+        if isinstance(self.address, int):
+            return f"PointerLiteral(0x{hex(self.address)})"
+        else:
+            return f"PointerLiteral({str(self.address)})"
 
 class BinaryOp(ASTNode):
     def __init__(self, left, op, right):
@@ -55,7 +65,6 @@ class ImportNode(ASTNode):
             return f"Import({'.'.join(self.parts)}: {', '.join(self.imported_symbols)})"
         else:
             return f"Import({'.'.join(self.parts)})"
-
 
 class FunctionCall(ASTNode):
     def __init__(self, name, arguments):
@@ -145,6 +154,21 @@ class AsmBlock(ASTNode):
     def __str__(self):
         return f"AsmBlock({self.instructions})"
 
+class Dereference(ASTNode):
+    def __init__(self, expr):
+        self.expr = expr
+
+    def __str__(self):
+        return f"Dereference({self.expr})"
+    
+class Cast(ASTNode):
+    def __init__(self, expr, target_type):
+        self.expr = expr
+        self.target_type = target_type
+
+    def __str__(self):
+        return f"Cast({self.expr} as {self.target_type})"
+
 # === Parser ===
 class Parser:
     def __init__(self, src):
@@ -192,9 +216,14 @@ class Parser:
                 self.current_token.column,
                 self.src.splitlines()
             )
-
+    
     def parse_type(self):
         type_name = self.expect(TokenType.IDENT).value
+        pointer_level = 0
+        while self.current_token.type == TokenType.STAR:
+            self.eat()
+            pointer_level += 1
+
         is_array = False
         size = None
         if self.current_token.type == TokenType.LBRACKET:
@@ -205,7 +234,8 @@ class Parser:
             else:
                 self.expect(TokenType.RBRACKET)
             is_array = True
-        return Type(type_name, is_array, size)
+
+        return Type(type_name, pointer_level=pointer_level, is_array=is_array, size=size)
 
     def parse_dotted_identifier(self):
         parts = [self.expect(TokenType.IDENT).value]
@@ -284,6 +314,9 @@ class Parser:
         elif tok.type == TokenType.BLIT:
             self.eat()
             return BooleanLiteral(tok.value)
+        elif tok.type == TokenType.KEYWORD and tok.value == "null":
+            self.eat()
+            return PointerLiteral(0)
         elif tok.type == TokenType.LBRACKET:
             self.eat()
             elements = []
@@ -295,6 +328,43 @@ class Parser:
                     self.eat()
             self.expect(TokenType.RBRACKET)
             return ArrayLiteral(elements)
+        elif tok.type == TokenType.STAR:
+            deref_level = 1
+            self.eat()
+            while self.current_token.type == TokenType.STAR:
+                self.eat()
+                deref_level += 1
+            
+            var_access = self.parse_variable_access_with_indexing()
+            if self.current_token.type == TokenType.LPAREN:
+                raise self.ParserError(
+                        "Attempt to deref function call",
+                        self.current_token.line,
+                        self.current_token.column,
+                        self.src.splitlines()
+                    )
+            elif self.current_token.type == TokenType.ASSIGN:
+                self.eat()
+                value = self.parse_expression()
+                node = var_access
+                for _ in range(deref_level):
+                    node = Dereference(node)
+
+                if len(var_access.parts) == 1 and isinstance(var_access.parts[0], str):
+                    return Assignment(node, value)
+                else:
+                    raise self.ParserError(
+                        "Assignment to indexed variables not supported yet",
+                        self.current_token.line,
+                        self.current_token.column,
+                        self.src.splitlines()
+                    )
+            else:
+                node = var_access
+                for _ in range(deref_level):
+                    node = Dereference(node)
+                return node
+
         elif tok.type == TokenType.IDENT:
             var_access = self.parse_variable_access_with_indexing()
             if self.current_token.type == TokenType.LPAREN:
@@ -336,7 +406,20 @@ class Parser:
                 return NumberLiteral(-operand.value)
             else:
                 return BinaryOp(NumberLiteral(0), TokenType.MINUS, operand)
-        return self.parse_primary()
+        elif self.current_token.type == TokenType.AND:
+            self.eat()
+            expr = self.parse_unary()
+            return PointerLiteral(expr)
+
+        expr = self.parse_primary()
+
+        while self.current_token.type == TokenType.KEYWORD and self.current_token.value == "as":
+            self.eat()
+            target_type = self.parse_type()
+            expr = Cast(expr, target_type)
+
+        return expr
+
 
     def parse_expression(self, precedence=0):
         PRECEDENCE = {
@@ -494,6 +577,32 @@ class Parser:
 
         self.expect(TokenType.RBRACE)
         return AsmBlock(instructions)
+    
+    def parse_assignment(self):
+        left = self.parse_unary()
+
+        if self.current_token.type == TokenType.ASSIGN:
+            self.eat()
+            value = self.parse_expression()
+            if isinstance(left, VariableAccess):
+                if len(left.parts) == 1 and isinstance(left.parts[0], str):
+                    return Assignment(left.parts[0], value)
+                else:
+                    raise self.ParserError(
+                        "Assignment to indexed variables not supported yet",
+                        self.current_token.line,
+                        self.current_token.column,
+                        self.src.splitlines()
+                    )
+            else:
+                raise self.ParserError(
+                    "Invalid assignment target",
+                    self.current_token.line,
+                    self.current_token.column,
+                    self.src.splitlines()
+                )
+        else:
+            return self.parse_expression()
 
     def parse(self):
         statements = []
