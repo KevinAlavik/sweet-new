@@ -1,14 +1,14 @@
 fn println(s: u8*) -> void {
     asm {
         mov rsi, s;
-        loop_start:
+        loop_start:;
         mov al, [rsi];
         cmp al, 0;
         je loop_end;
-        out 233, al;
+        out 0xE9, al;
         inc rsi;
         jmp loop_start;
-        loop_end:
+        loop_end:;
     }
 }
 

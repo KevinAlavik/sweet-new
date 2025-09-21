@@ -243,23 +243,60 @@ class Lexer:
     def number(self):
         start = self.pos
         start_col = self.column
-        while self.peek().isdigit():
+        c = self.peek()
+
+        if c == '0' and self.peek(1) in 'xX':
             self.advance()
-        if self.peek() == '.' and self.peek(1).isdigit():
             self.advance()
+            hex_start = self.pos
+            while self.peek().isdigit() or self.peek().lower() in 'abcdef':
+                self.advance()
+            value_str = self.source[hex_start:self.pos]
+            if not value_str:
+                raise LexerError("Invalid hexadecimal literal", self.line, start_col, self.lines)
+            value = int(value_str, 16)
+            self.add_token(TokenType.NLIT, value)
+        elif c == '0' and self.peek(1) in 'oO':
+            self.advance()
+            self.advance()
+            oct_start = self.pos
+            while self.peek() in '01234567':
+                self.advance()
+            value_str = self.source[oct_start:self.pos]
+            if not value_str:
+                raise LexerError("Invalid octal literal", self.line, start_col, self.lines)
+            value = int(value_str, 8)
+            self.add_token(TokenType.NLIT, value)
+        elif c == '0' and self.peek(1) in 'bB':
+            self.advance()
+            self.advance()
+            bin_start = self.pos
+            while self.peek() in '01':
+                self.advance()
+            value_str = self.source[bin_start:self.pos]
+            if not value_str:
+                raise LexerError("Invalid binary literal", self.line, start_col, self.lines)
+            value = int(value_str, 2)
+            self.add_token(TokenType.NLIT, value)
+        else:
             while self.peek().isdigit():
                 self.advance()
-            try:
-                value = float(self.source[start:self.pos])
-            except ValueError:
-                raise LexerError("Invalid float literal", self.line, start_col, self.lines)
-            self.add_token(TokenType.FLIT, value)
-        else:
-            try:
-                value = int(self.source[start:self.pos])
-            except ValueError:
-                raise LexerError("Invalid integer literal", self.line, start_col, self.lines)
-            self.add_token(TokenType.NLIT, value)
+            if self.peek() == '.' and self.peek(1).isdigit():
+                self.advance()
+                while self.peek().isdigit():
+                    self.advance()
+                try:
+                    value = float(self.source[start:self.pos])
+                except ValueError:
+                    raise LexerError("Invalid float literal", self.line, start_col, self.lines)
+                self.add_token(TokenType.FLIT, value)
+            else:
+                try:
+                    value = int(self.source[start:self.pos])
+                except ValueError:
+                    raise LexerError("Invalid integer literal", self.line, start_col, self.lines)
+                self.add_token(TokenType.NLIT, value)
+
 
     def identifier(self):
         start = self.pos
