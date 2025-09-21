@@ -2,3 +2,8 @@ out
 __pycache__
 *.o
 build/
+com1.log
+iso_root
+limine
+ovmf
+*.iso

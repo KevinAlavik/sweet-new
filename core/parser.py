@@ -2,7 +2,6 @@ from abc import ABC
 from core.lexer import Lexer, Token, TokenType
 from core.typechecker import Type
 
-# === AST Nodes ===
 class ASTNode(ABC):
     def __repr__(self):
         return str(self)
@@ -177,7 +176,6 @@ class Cast(ASTNode):
     def __str__(self):
         return f"Cast({self.expr} as {self.target_type})"
 
-# === Parser ===
 class Parser:
     def __init__(self, src):
         self.lexer = Lexer(src)
@@ -185,6 +183,8 @@ class Parser:
         self.tokens = self.lexer.scan_tokens()
         self.current_index = 0
         self.current_token = self.tokens[self.current_index]
+        self.symbol_table = {}
+        self.current_stack_offset = 8
 
     class ParserError(SyntaxError):
         def __init__(self, message, line, column, source_lines):
@@ -231,7 +231,6 @@ class Parser:
         while self.current_token.type == TokenType.STAR:
             self.eat()
             pointer_level += 1
-
         is_array = False
         size = None
         if self.current_token.type == TokenType.LBRACKET:
@@ -242,7 +241,6 @@ class Parser:
             else:
                 self.expect(TokenType.RBRACKET)
             is_array = True
-
         return Type(type_name, pointer_level=pointer_level, is_array=is_array, size=size)
 
     def parse_dotted_identifier(self):
@@ -255,7 +253,6 @@ class Parser:
     def parse_import(self):
         self.expect(TokenType.KEYWORD)
         parts = self.parse_dotted_identifier()
-
         imported_symbols = None
         if self.current_token.type == TokenType.COLON:
             self.eat()
@@ -266,7 +263,6 @@ class Parser:
                     break
                 self.eat()
         self.expect(TokenType.SEMICOLON)
-
         return ImportNode(parts, imported_symbols)
 
     def parse_arguments(self):
@@ -282,12 +278,26 @@ class Parser:
 
     def parse_parameters(self):
         parameters = []
+        register_map = ['rdi', 'rsi', 'rdx', 'rcx', 'r8', 'r9']
+        param_index = 0
         if self.current_token.type != TokenType.RPAREN:
             while True:
                 param_name = self.expect(TokenType.IDENT).value
                 self.expect(TokenType.COLON)
                 param_type = self.parse_type()
+                if param_index < len(register_map):
+                    self.symbol_table[param_name] = {
+                        "type": param_type,
+                        "register": register_map[param_index]
+                    }
+                else:
+                    self.symbol_table[param_name] = {
+                        "type": param_type,
+                        "offset": -self.current_stack_offset
+                    }
+                    self.current_stack_offset += 8
                 parameters.append(Parameter(param_name, param_type))
+                param_index += 1
                 if self.current_token.type != TokenType.COMMA:
                     break
                 self.eat()
@@ -296,7 +306,6 @@ class Parser:
 
     def parse_variable_access_with_indexing(self):
         parts = [self.expect(TokenType.IDENT).value]
-
         while True:
             if self.current_token.type == TokenType.DOT:
                 self.eat()
@@ -344,22 +353,20 @@ class Parser:
             while self.current_token.type == TokenType.STAR:
                 self.eat()
                 deref_level += 1
-            
             var_access = self.parse_variable_access_with_indexing()
             if self.current_token.type == TokenType.LPAREN:
                 raise self.ParserError(
-                        "Attempt to deref function call",
-                        self.current_token.line,
-                        self.current_token.column,
-                        self.src.splitlines()
-                    )
+                    "Attempt to deref function call",
+                    self.current_token.line,
+                    self.current_token.column,
+                    self.src.splitlines()
+                )
             elif self.current_token.type == TokenType.ASSIGN:
                 self.eat()
                 value = self.parse_expression()
                 node = var_access
                 for _ in range(deref_level):
                     node = Dereference(node)
-
                 if len(var_access.parts) == 1 and isinstance(var_access.parts[0], str):
                     return Assignment(node, value)
                 else:
@@ -374,7 +381,6 @@ class Parser:
                 for _ in range(deref_level):
                     node = Dereference(node)
                 return node
-
         elif tok.type == TokenType.IDENT:
             var_access = self.parse_variable_access_with_indexing()
             if self.current_token.type == TokenType.LPAREN:
@@ -420,14 +426,11 @@ class Parser:
             self.eat()
             expr = self.parse_unary()
             return PointerLiteral(expr)
-
         expr = self.parse_primary()
-
         while self.current_token.type == TokenType.KEYWORD and self.current_token.value == "as":
             self.eat()
             target_type = self.parse_type()
             expr = Cast(expr, target_type)
-
         return expr
 
     def parse_expression(self, precedence=0):
@@ -449,9 +452,7 @@ class Parser:
             TokenType.SLASH: 9,
             TokenType.PERCENT: 9,
         }
-
         left = self.parse_unary()
-
         while True:
             tok = self.current_token
             if tok.type not in PRECEDENCE:
@@ -462,7 +463,6 @@ class Parser:
             self.eat()
             right = self.parse_expression(token_prec + 1)
             left = BinaryOp(left, tok.type, right)
-
         return left
 
     def parse_statement(self):
@@ -503,6 +503,10 @@ class Parser:
             return expr
 
     def parse_function(self, is_public):
+        old_symbol_table = self.symbol_table
+        old_stack_offset = self.current_stack_offset
+        self.symbol_table = {}
+        self.current_stack_offset = 8
         self.expect(TokenType.KEYWORD)
         name = self.expect(TokenType.IDENT).value
         self.expect(TokenType.LPAREN)
@@ -514,8 +518,13 @@ class Parser:
         self.expect(TokenType.LBRACE)
         body = []
         while self.current_token.type != TokenType.RBRACE:
-            body.append(self.parse_statement())
+            if self.current_token.type == TokenType.KEYWORD and self.current_token.value == "asm":
+                body.append(self.parse_asm_block(parameters=parameters))
+            else:
+                body.append(self.parse_statement())
         self.expect(TokenType.RBRACE)
+        self.symbol_table = old_symbol_table
+        self.current_stack_offset = old_stack_offset
         return FunctionDef(name, parameters, return_type, body, is_public)
 
     def parse_variable(self, is_public):
@@ -528,6 +537,8 @@ class Parser:
             self.eat()
             value = self.parse_expression()
         self.expect(TokenType.SEMICOLON)
+        self.symbol_table[name] = {"type": type_, "offset": -self.current_stack_offset}
+        self.current_stack_offset += 8
         return VariableDef(name, type_, value, is_public)
 
     def parse_extern(self):
@@ -536,7 +547,6 @@ class Parser:
         is_variadic = False
         parameters = []
         return_type = None
-
         if self.current_token.type == TokenType.LPAREN:
             self.eat()
             if self.current_token.type != TokenType.RPAREN:
@@ -551,45 +561,74 @@ class Parser:
                         break
                     self.eat()
             self.expect(TokenType.RPAREN)
-
         if self.current_token.type == TokenType.ARROW:
             self.eat()
             return_type = self.parse_type()
         self.expect(TokenType.SEMICOLON)
-
         return ExternDecl(name, is_variadic, return_type, parameters)
 
-    def parse_asm_block(self):
+    def parse_asm_block(self, parameters=None):
         self.expect(TokenType.KEYWORD)
         self.expect(TokenType.LBRACE)
-
         instructions = []
         current_line_tokens = []
-
         while self.current_token.type != TokenType.RBRACE:
             if self.current_token.type == TokenType.EOF:
-                raise Exception("Unexpected EOF in asm block")
-
+                raise self.ParserError(
+                    "Unexpected EOF in asm block",
+                    self.current_token.line,
+                    self.current_token.column,
+                    self.src.splitlines()
+                )
             tok = self.eat()
             if tok.value == ';':
-                line = ' '.join(str(tok) for tok in current_line_tokens).strip()
+                line = self._process_asm_line(current_line_tokens, parameters or [])
                 if line:
                     instructions.append(line)
                 current_line_tokens = []
             else:
-                current_line_tokens.append(tok.value)
-
+                current_line_tokens.append(tok)
         if current_line_tokens:
-            line = ' '.join(str(tok) for tok in current_line_tokens).strip()
+            line = self._process_asm_line(current_line_tokens, parameters or [])
             if line:
                 instructions.append(line)
-
         self.expect(TokenType.RBRACE)
         return AsmBlock(instructions)
 
+    def _process_asm_line(self, tokens, parameters):
+        if not tokens:
+            return ""
+        register_map = ['rdi', 'rsi', 'rdx', 'rcx', 'r8', 'r9']
+        char_register_map = ['dil', 'sil', 'dl', 'cl', 'r8b', 'r9b']
+        processed_tokens = []
+        for tok in tokens:
+            if tok.type == TokenType.IDENT:
+                param_index = next((i for i, param in enumerate(parameters) if param.name == tok.value), -1)
+                if param_index >= 0 and param_index < len(register_map):
+                    if parameters[param_index].type_.name == "char":
+                        processed_tokens.append(char_register_map[param_index])
+                    else:
+                        processed_tokens.append(register_map[param_index])
+                elif tok.value in self.symbol_table:
+                    symbol = self.symbol_table[tok.value]
+                    if "register" in symbol:
+                        if symbol["type"].name == "char":
+                            reg_index = register_map.index(symbol["register"])
+                            processed_tokens.append(char_register_map[reg_index])
+                        else:
+                            processed_tokens.append(symbol["register"])
+                    elif "offset" in symbol:
+                        processed_tokens.append(f"[rbp {symbol['offset']:+d}]")
+                    else:
+                        processed_tokens.append(tok.value)
+                else:
+                    processed_tokens.append(tok.value)
+            else:
+                processed_tokens.append(str(tok.value))
+        return ' '.join(processed_tokens).strip()
+
     def parse_assignment(self):
         left = self.parse_unary()
-
         if self.current_token.type == TokenType.ASSIGN:
             self.eat()
             value = self.parse_expression()

@@ -27,8 +27,10 @@ class Compiler:
     def validate_input_files(self) -> None:
         if not os.path.exists(self.args.source):
             raise FileNotFoundError(f"Source file not found: {self.args.source}")
-        if not os.path.exists(self.args.runtime):
+        if not self.args.freestanding and not os.path.exists(self.args.runtime):
             raise FileNotFoundError(f"Runtime file not found: {self.args.runtime}")
+        if self.args.freestanding and self.args.ldflags == "":
+            raise ValueError("A custom linker script must be provided via --ldflags when using --freestanding")
 
     def read_source(self, source_path: str) -> str:
         try:
@@ -96,7 +98,7 @@ class Compiler:
         with open(asm_path, "w", encoding="utf-8") as f:
             f.write(asm_output)
 
-        nasm_cmd = ["nasm", "-felf64", asm_path, "-o", obj_path] + self.args.asflags.split()
+        nasm_cmd = ["nasm", "-felf64", asm_path, "-o", obj_path] + (self.args.nasmflags or self.args.asflags).split()
         if self.args.verbose:
             print(f"[*] Running: {' '.join(nasm_cmd)}")
         try:
@@ -121,7 +123,7 @@ class Compiler:
 
     def assemble_runtime(self) -> str:
         runtime_obj_path = os.path.join(self.build_dir, "runtime.o")
-        nasm_cmd = ["nasm", "-felf64", self.args.runtime, "-o", runtime_obj_path]
+        nasm_cmd = ["nasm", "-felf64", self.args.runtime, "-o", runtime_obj_path] + (self.args.nasmflags or self.args.asflags).split()
         if self.args.verbose:
             print(f"[*] Assembling runtime: {' '.join(nasm_cmd)}")
         try:
@@ -132,7 +134,7 @@ class Compiler:
         return runtime_obj_path
 
     def link_objects(self, object_files: List[str]) -> None:
-        ld_cmd = ["gcc", "-no-pie"] + object_files + ["-o", self.args.output]
+        ld_cmd = ["gcc"] + (["-no-pie"] if not self.args.freestanding else []) + object_files + ["-o", self.args.output] + self.args.ldflags.split()
         if self.args.verbose:
             print(f"[*] Running: {' '.join(ld_cmd)}")
         try:
@@ -160,11 +162,13 @@ class Compiler:
             self.process_non_binary_output(source)
             return
         self.setup_build_directory()
-        runtime_obj = self.assemble_runtime()
         main_obj = os.path.join(self.build_dir, "prog.o")
         imported_modules = self.compile_to_object(source, main_obj)
         imported_objs = self.compile_imported_modules(imported_modules)
-        all_objs = [runtime_obj, main_obj] + imported_objs
+        all_objs = [main_obj] + imported_objs
+        if not self.args.freestanding:
+            runtime_obj = self.assemble_runtime()
+            all_objs.insert(0, runtime_obj)
         self.link_objects(all_objs)
         self.run_executable()
 
@@ -174,13 +178,17 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("-o", "--output", default="out", help="Output executable name")
     parser.add_argument("-of", "--output-format", choices=["bin", "asm", "ast", "lexer"], 
                        default="bin", help="Output format: bin (default), asm (stdout), ast (stdout), lexer (stdout)")
-    parser.add_argument("--asflags", default="", help="Additional NASM flags")
+    parser.add_argument("--asflags", default="", help="Additional NASM flags (alias for --nasmflags)")
+    parser.add_argument("--nasmflags", default="", help="Additional NASM flags")
+    parser.add_argument("--ldflags", default="", help="Additional linker flags (e.g., -T linker_script.ld)")
     parser.add_argument("-v", "--verbose", action="store_true", help="Verbose output")
     parser.add_argument("-r", "--run", action="store_true", 
                        help="Run the output binary after compilation, then remove it")
     parser.add_argument("-nc", "--no-clean", action="store_true", 
                        help="Do not remove the build directory after compilation")
     parser.add_argument("--runtime", default="runtime.asm", help="Path to runtime.asm file")
+    parser.add_argument("--freestanding", action="store_true", 
+                       help="Compile without linking runtime.asm (requires --ldflags with custom linker script)")
     return parser.parse_args()
 
 def main():
@@ -188,7 +196,7 @@ def main():
     compiler = Compiler(args)
     try:
         compiler.compile()
-    except (FileNotFoundError, IOError) as e:
+    except (FileNotFoundError, IOError, ValueError) as e:
         print(f"[!] Error: {e}")
         sys.exit(1)
 
