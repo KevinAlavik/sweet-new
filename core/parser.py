@@ -28,6 +28,13 @@ class StringLiteral(ASTNode):
     def __str__(self):
         return f"String({repr(self.value)})"
 
+class CharLiteral(ASTNode):
+    def __init__(self, value):
+        self.value = value
+
+    def __str__(self):
+        return f"Char({repr(self.value)})"
+
 class ArrayLiteral(ASTNode):
     def __init__(self, elements):
         self.elements = elements
@@ -35,7 +42,7 @@ class ArrayLiteral(ASTNode):
     def __str__(self):
         elements_str = ", ".join(str(elem) for elem in self.elements)
         return f"ArrayLiteral([{elements_str}])"
-    
+
 class PointerLiteral(ASTNode):
     def __init__(self, address: int):
         self.address = address
@@ -136,7 +143,7 @@ class Assignment(ASTNode):
 
     def __str__(self):
         return f"Assignment({self.name}, {self.value})"
-    
+
 class ExternDecl(ASTNode):
     def __init__(self, name, is_variadic, return_type, parameters=None, is_var=False):
         self.name = name
@@ -144,6 +151,7 @@ class ExternDecl(ASTNode):
         self.return_type = return_type or Type("void")
         self.parameters = parameters if parameters is not None else []
         self.var = is_var
+
     def __str__(self):
         return f"ExternDecl({self.name}, variadic={self.is_variadic}, return_type={self.return_type}, parameters={self.parameters}, var={self.var})"
 
@@ -160,7 +168,7 @@ class Dereference(ASTNode):
 
     def __str__(self):
         return f"Dereference({self.expr})"
-    
+
 class Cast(ASTNode):
     def __init__(self, expr, target_type):
         self.expr = expr
@@ -216,7 +224,7 @@ class Parser:
                 self.current_token.column,
                 self.src.splitlines()
             )
-    
+
     def parse_type(self):
         type_name = self.expect(TokenType.IDENT).value
         pointer_level = 0
@@ -260,7 +268,6 @@ class Parser:
         self.expect(TokenType.SEMICOLON)
 
         return ImportNode(parts, imported_symbols)
-
 
     def parse_arguments(self):
         arguments = []
@@ -311,6 +318,9 @@ class Parser:
         elif tok.type == TokenType.SLIT:
             self.eat()
             return StringLiteral(tok.value)
+        elif tok.type == TokenType.CLIT:
+            self.eat()
+            return CharLiteral(tok.value)
         elif tok.type == TokenType.BLIT:
             self.eat()
             return BooleanLiteral(tok.value)
@@ -419,7 +429,6 @@ class Parser:
             expr = Cast(expr, target_type)
 
         return expr
-
 
     def parse_expression(self, precedence=0):
         PRECEDENCE = {
@@ -537,7 +546,7 @@ class Parser:
                         self.eat()
                         break
                     param_type = self.parse_type()
-                    parameters.append(param_type)
+                    parameters.append(Parameter(f"param_{len(parameters)}", param_type))
                     if self.current_token.type != TokenType.COMMA:
                         break
                     self.eat()
@@ -549,7 +558,7 @@ class Parser:
         self.expect(TokenType.SEMICOLON)
 
         return ExternDecl(name, is_variadic, return_type, parameters)
-    
+
     def parse_asm_block(self):
         self.expect(TokenType.KEYWORD)
         self.expect(TokenType.LBRACE)
@@ -577,7 +586,7 @@ class Parser:
 
         self.expect(TokenType.RBRACE)
         return AsmBlock(instructions)
-    
+
     def parse_assignment(self):
         left = self.parse_unary()
 

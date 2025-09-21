@@ -128,6 +128,7 @@ class CodeGen:
             Assignment: self._codegen_assignment,
             BinaryOp: self._codegen_binary_op,
             NumberLiteral: lambda n: self._codegen_expression(n, 'rax'),
+            CharLiteral: lambda n: self._codegen_expression(n, 'rax'),
             StringLiteral: lambda n: self._codegen_expression(n, 'rax'),
             BooleanLiteral: lambda n: self._codegen_expression(n, 'rax'),
             VariableAccess: lambda n: self._codegen_expression(n, 'rax'),
@@ -262,6 +263,8 @@ class CodeGen:
     def _codegen_expression(self, node, target_reg='rax'):
         if isinstance(node, NumberLiteral):
             self.emit(f"mov {target_reg}, {node.value}")
+        elif isinstance(node, CharLiteral):
+            self.emit(f"mov {target_reg}, {ord(node.value)}")
         elif isinstance(node, StringLiteral):
             label = self.get_string_label(node.value)
             self.emit(f"lea {target_reg}, [rel {label}]")
